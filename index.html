@@ -6,7 +6,6 @@
     <title>Escáner de Inventario</title>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/html5-qrcode"></script>
-    <script src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js'></script>
     
     <style>
         :root {
@@ -31,9 +30,8 @@
         .btn-entrada { background-color: var(--azul-oscuro); }
         .btn-salida { background-color: var(--naranja); }
         .btn-detener { background-color: var(--rojo-salida); margin-top: 15px; }
-        .btn-manual { background-color: var(--gris-texto); font-size: 14px; padding: 12px; margin-top: 0;}
-        .btn-escanear { background-color: var(--azul-oscuro); font-size: 16px; margin-bottom: 10px;}
-        .btn-ocr { background-color: #8e44ad; font-size: 14px; padding: 12px; margin-top: 5px;}
+        .btn-manual { background-color: var(--azul-oscuro); font-size: 16px; padding: 15px; margin-top: 5px;}
+        .btn-escanear { background-color: var(--naranja); font-size: 18px; margin-bottom: 10px;}
         
         #reader { width: 100%; margin: 10px 0; display: none; border-radius: 8px; overflow: hidden; border: 2px solid var(--gris-fondo); }
         #mensaje { margin-top: 15px; font-weight: 500; padding: 12px; border-radius: 8px; display: none; font-size: 14px; }
@@ -45,7 +43,6 @@
         #lista-escaneados li { margin-bottom: 4px; font-weight: 500; color: var(--azul-oscuro); }
 
         #seccion-acciones { display: none; margin-top: 15px; border-top: 1px dashed #ccc; padding-top: 15px; }
-        #foto-input { display: none; }
     </style>
 </head>
 <body>
@@ -64,14 +61,13 @@
             <div id="reader"></div>
             
             <div id="seccion-acciones">
-                <button id="btn-camara" class="btn-escanear" onclick="abrirCamaraBarras()">📷 Escanear con Cámara</button>
+                <!-- Botón de cámara grande -->
+                <button id="btn-camara" class="btn-escanear" onclick="abrirCamaraBarras()">📷 Escanear Código de Barras</button>
                 
                 <label style="margin-top: 15px;">O escribe el serial manual:</label>
-                <input type="text" id="serial-manual" placeholder="Escribe el código aquí">
-                <button class="btn-manual" onclick="guardarManual()">Guardar este Serial</button>
-                
-                <input type="file" id="foto-input" accept="image/*" capture="environment">
-                <button id="btn-ia" class="btn-ocr" onclick="document.getElementById('foto-input').click()">🧠 Leer Código Roto (IA)</button>
+                <!-- onchange detecta si usas el botón "Pegar" o si presionas Enter -->
+                <input type="text" id="serial-manual" placeholder="Escribe o pega el serial aquí" onchange="guardarManual()">
+                <button class="btn-manual" onclick="guardarManual()">Guardar Serial</button>
             </div>
 
             <div id="lista-escaneados">
@@ -116,11 +112,19 @@
             document.getElementById('reader').style.display = 'block';
             
             html5QrCode = new Html5Qrcode("reader");
+            // Le pedimos a la cámara que sea rápida (fps: 15)
             html5QrCode.start(
                 { facingMode: "environment" },
-                { fps: 10, qrbox: { width: 250, height: 150 } },
+                { fps: 15, qrbox: { width: 280, height: 150 } },
                 (decodedText) => {
                     if (navigator.vibrate) navigator.vibrate(100);
+                    
+                    // Si el texto tiene menos de 10 caracteres, es el código de modelo (MO:), lo ignoramos y seguimos escaneando
+                    if (decodedText.length < 10) {
+                        return;
+                    }
+
+                    // Si es un serial largo, apagamos la cámara y lo guardamos
                     html5QrCode.stop().then(() => {
                         document.getElementById('reader').style.display = 'none';
                         html5QrCode.clear();
@@ -131,73 +135,25 @@
             ).catch(err => { alert('Error al abrir cámara: ' + err); });
         }
 
-        // LÓGICA MEJORADA DE LA IA
-        document.getElementById('foto-input').addEventListener('change', async (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-
-            const mensajeDiv = document.getElementById('mensaje');
-            const btnIA = document.getElementById('btn-ia');
-            
-            // Bloquear botón para que no se presione dos veces
-            btnIA.disabled = true;
-            btnIA.innerText = '🧠 Leyendo...';
-
-            mensajeDiv.style.display = 'block';
-            mensajeDiv.className = '';
-            mensajeDiv.style.backgroundColor = '#e5e7eb';
-            mensajeDiv.style.color = '#374151';
-            mensajeDiv.innerText = 'Analizando imagen...';
-
-            try {
-                const { data: { text } } = await Tesseract.recognize(file, 'eng');
-                
-                // 1. Buscamos si el texto contiene "S/N:" y sacamos lo que sigue
-                let serialLeido = null;
-                const matchSN = text.match(/S\/N:?\s*([A-Z0-9]{10,25})/i);
-                
-                if (matchSN) {
-                    serialLeido = matchSN[1].trim();
-                } else {
-                    // 2. Si no encuentra S/N, busca cualquier cadena larga de números y letras
-                    const matchGenerico = text.match(/[A-Z0-9]{12,25}/i);
-                    if (matchGenerico) serialLeido = matchGenerico[0];
-                }
-                
-                if (serialLeido) {
-                    mensajeDiv.innerText = '📖 Serial detectado: ' + serialLeido;
-                    procesarSerial(serialLeido);
-                } else {
-                    mensajeDiv.className = 'error';
-                    mensajeDiv.innerText = '❌ No se detectó un serial válido. Intenta de nuevo o escríbelo manual.';
-                }
-            } catch (error) {
-                mensajeDiv.className = 'error';
-                mensajeDiv.innerText = '❌ Error al procesar la imagen.';
-            } finally {
-                e.target.value = ''; 
-                btnIA.disabled = false;
-                btnIA.innerText = '🧠 Leer Código Roto (IA)';
-            }
-        });
-
         function guardarManual() {
             const inputSerial = document.getElementById('serial-manual');
             const serial = inputSerial.value.trim();
-            if (!serial) { alert("Escribe un serial válido."); return; }
+            if (!serial) return; // Si está vacío, no hace nada
+            
             procesarSerial(serial);
             inputSerial.value = '';
             inputSerial.focus();
         }
 
         function procesarSerial(serial) {
-            // Filtro de seguridad
-            if (serial.length > 25 || serial.length < 5) {
+            // Limpiamos espacios en blanco
+            serial = serial.trim();
+
+            if (serial.length > 30 || serial.length < 8) {
                 alert('⚠️ El código es muy corto o muy largo. Revisa el producto.');
                 return;
             }
 
-            // Evitar duplicados si la cámara lee dos veces muy rápido
             if (listaSeriales.includes(serial)) {
                 alert('⚠️ Este serial ya fue escaneado en esta tanda.');
                 return;
