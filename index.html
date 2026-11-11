@@ -31,7 +31,7 @@
         .btn-salida { background-color: var(--naranja); }
         .btn-detener { background-color: var(--rojo-salida); margin-top: 15px; }
         .btn-manual { background-color: var(--azul-oscuro); font-size: 16px; padding: 15px; margin-top: 5px;}
-        .btn-escanear { background-color: var(--naranja); font-size: 18px; margin-bottom: 10px;}
+        .btn-escanear { background-color: var(--naranja); font-size: 18px; margin-bottom: 10px; }
         
         #reader { width: 100%; margin: 10px 0; display: none; border-radius: 8px; overflow: hidden; border: 2px solid var(--gris-fondo); }
         #mensaje { margin-top: 15px; font-weight: 500; padding: 12px; border-radius: 8px; display: none; font-size: 14px; }
@@ -61,21 +61,19 @@
             <div id="reader"></div>
             
             <div id="seccion-acciones">
-                <!-- Botón de cámara grande -->
-                <button id="btn-camara" class="btn-escanear" onclick="abrirCamaraBarras()">📷 Escanear Código de Barras</button>
+                <button id="btn-camara" class="btn-escanear" onclick="abrirCamaraBarras()">📷 Escanear Código</button>
                 
                 <label style="margin-top: 15px;">O escribe el serial manual:</label>
-                <!-- onchange detecta si usas el botón "Pegar" o si presionas Enter -->
-                <input type="text" id="serial-manual" placeholder="Escribe o pega el serial aquí" onchange="guardarManual()">
-                <button class="btn-manual" onclick="guardarManual()">Guardar Serial</button>
+                <input type="text" id="serial-manual" placeholder="Escribe y presiona Enter" onchange="guardarManual()">
+                <button class="btn-manual" onclick="guardarManual()">Añadir a la lista</button>
             </div>
 
             <div id="lista-escaneados">
-                <strong>Guardados en esta tanda:</strong>
+                <strong>En esta tanda (<span id="contador">0</span>):</strong>
                 <ul id="ul-escaneados"></ul>
             </div>
 
-            <button id="btn-detener" class="btn-detener" onclick="detenerTanda()">🛑 Terminar y Guardar</button>
+            <button id="btn-detener" class="btn-detener" onclick="detenerTanda()">🛑 Terminar y Subir a Sheets</button>
         </div>
 
         <div id="mensaje"></div>
@@ -87,7 +85,7 @@
         let html5QrCode = null;
         let tipoMovimiento = '';
         let operarioActual = '';
-        let listaSeriales = []; 
+        let listaSeriales = []; // Aquí se guardan localmente (rapidísimo)
         
         document.getElementById('operario').value = localStorage.getItem('operarioInv') || '';
 
@@ -104,6 +102,7 @@
             document.getElementById('seccion-acciones').style.display = 'block'; 
             document.getElementById('lista-escaneados').style.display = 'block';
             document.getElementById('ul-escaneados').innerHTML = '';
+            document.getElementById('contador').innerText = '0';
             document.getElementById('mensaje').style.display = 'none';
             document.getElementById('serial-manual').value = '';
         }
@@ -112,24 +111,20 @@
             document.getElementById('reader').style.display = 'block';
             
             html5QrCode = new Html5Qrcode("reader");
-            // Le pedimos a la cámara que sea rápida (fps: 15)
             html5QrCode.start(
                 { facingMode: "environment" },
                 { fps: 15, qrbox: { width: 280, height: 150 } },
                 (decodedText) => {
                     if (navigator.vibrate) navigator.vibrate(100);
                     
-                    // Si el texto tiene menos de 10 caracteres, es el código de modelo (MO:), lo ignoramos y seguimos escaneando
-                    if (decodedText.length < 10) {
-                        return;
-                    }
+                    // Ignorar códigos cortos (como los de modelo)
+                    if (decodedText.length < 10) return;
 
-                    // Si es un serial largo, apagamos la cámara y lo guardamos
                     html5QrCode.stop().then(() => {
                         document.getElementById('reader').style.display = 'none';
                         html5QrCode.clear();
                     });
-                    procesarSerial(decodedText);
+                    agregarALista(decodedText);
                 },
                 (errorMessage) => {}
             ).catch(err => { alert('Error al abrir cámara: ' + err); });
@@ -138,64 +133,79 @@
         function guardarManual() {
             const inputSerial = document.getElementById('serial-manual');
             const serial = inputSerial.value.trim();
-            if (!serial) return; // Si está vacío, no hace nada
-            
-            procesarSerial(serial);
+            if (!serial) return;
+            agregarALista(serial);
             inputSerial.value = '';
             inputSerial.focus();
         }
 
-        function procesarSerial(serial) {
-            // Limpiamos espacios en blanco
+        // ESTA FUNCIÓN ES INSTANTÁNEA (No se conecta a internet)
+        function agregarALista(serial) {
             serial = serial.trim();
 
             if (serial.length > 30 || serial.length < 8) {
-                alert('⚠️ El código es muy corto o muy largo. Revisa el producto.');
+                alert('⚠️ El código es muy corto o muy largo.');
                 return;
             }
 
             if (listaSeriales.includes(serial)) {
-                alert('⚠️ Este serial ya fue escaneado en esta tanda.');
+                alert('⚠️ Este serial ya está en la lista.');
                 return;
             }
 
+            // Guardar en memoria
+            listaSeriales.push(serial);
+            
+            // Actualizar la pantalla visualmente
+            document.getElementById('ul-escaneados').innerHTML += '<li>' + serial + '</li>';
+            document.getElementById('contador').innerText = listaSeriales.length;
+            
             const mensajeDiv = document.getElementById('mensaje');
             mensajeDiv.style.display = 'block';
-            mensajeDiv.className = '';
-            mensajeDiv.style.backgroundColor = '#e5e7eb';
-            mensajeDiv.style.color = '#374151';
-            mensajeDiv.innerText = 'Guardando: ' + serial + '...';
+            mensajeDiv.className = 'exito';
+            mensajeDiv.innerText = '✅ Agregado: ' + serial;
+        }
 
-            const payload = { serial: serial, tipo: tipoMovimiento, operario: operarioActual };
+        // AQUÍ SE ENVÍA TODO A GOOGLE SHEETS DE GOLPE
+        function detenerTanda() {
+            if (html5QrCode) {
+                html5QrCode.stop().then(() => html5QrCode.clear()).catch(e => console.log(e));
+            }
+
+            if (listaSeriales.length === 0) {
+                alert('No has escaneado ningún producto.');
+                return;
+            }
+
+            const btn = document.getElementById('btn-detener');
+            btn.innerText = '⏳ Subiendo a Google Sheets...';
+            btn.disabled = true;
+
+            const payload = { 
+                seriales: listaSeriales, 
+                tipo: tipoMovimiento, 
+                operario: operarioActual 
+            };
 
             fetch(URL_APPS_SCRIPT, {
                 method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             }).then(() => {
-                listaSeriales.push(serial);
-                document.getElementById('ul-escaneados').innerHTML += '<li>' + serial + '</li>';
+                // Terminamos y volvemos al inicio
+                document.getElementById('reader').style.display = 'none';
+                document.getElementById('pantalla-escaneo').style.display = 'none';
+                document.getElementById('pantalla-inicio').style.display = 'block';
                 
-                mensajeDiv.className = 'exito';
-                mensajeDiv.style.backgroundColor = '';
-                mensajeDiv.innerText = '✅ Guardado: ' + serial;
-            }).catch((error) => {
-                mensajeDiv.className = 'error';
-                mensajeDiv.innerText = '❌ Error al guardar: ' + serial;
-            });
-        }
-
-        function detenerTanda() {
-            if (html5QrCode) {
-                html5QrCode.stop().then(() => html5QrCode.clear()).catch(e => console.log(e));
-            }
-            document.getElementById('reader').style.display = 'none';
-            document.getElementById('pantalla-escaneo').style.display = 'none';
-            document.getElementById('pantalla-inicio').style.display = 'block';
-            
-            if (listaSeriales.length > 0) {
                 document.getElementById('mensaje').className = 'exito';
-                document.getElementById('mensaje').innerText = '✅ Tanda terminada. Guardados: ' + listaSeriales.length;
-            }
+                document.getElementById('mensaje').innerText = '✅ ¡Éxito! Se subieron ' + listaSeriales.length + ' productos a la nube.';
+                
+                btn.innerText = '🛑 Terminar y Subir a Sheets';
+                btn.disabled = false;
+            }).catch((error) => {
+                alert('Error de red. Revisa tu conexión a internet.');
+                btn.innerText = '🛑 Terminar y Subir a Sheets';
+                btn.disabled = false;
+            });
         }
     </script>
 </body>
