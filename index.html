@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Escáner de Inventario</title>
+    <!-- Fuente Poppins -->
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Lector de códigos de barras -->
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <!-- IA para leer códigos rotos (Tesseract.js) -->
+    <script src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js'></script>
+    
+    <style>
+        :root {
+            --azul-oscuro: #2f517e;
+            --naranja: #e3801e;
+            --gris-texto: #6b7280;
+            --gris-fondo: #f3f4f6;
+            --blanco: #ffffff;
+            --rojo-salida: #c0392b;
+        }
+
+        body { 
+            font-family: 'Poppins', sans-serif; 
+            text-align: center; 
+            padding: 15px; 
+            background-color: var(--gris-fondo); 
+            margin: 0; 
+            color: var(--azul-oscuro);
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .contenedor { 
+            max-width: 400px; 
+            margin: 0 auto; 
+            background: var(--blanco); 
+            padding: 20px; 
+            border-radius: 12px; 
+            box-shadow: 0 8px 20px rgba(47, 81, 126, 0.15); 
+        }
+
+        h2 { margin-top: 0; font-weight: 600; font-size: 22px; }
+
+        label { display: block; text-align: left; font-size: 13px; font-weight: 500; color: var(--gris-texto); margin-bottom: 5px; padding-left: 5px; }
+
+        input { 
+            padding: 12px; font-size: 16px; width: 90%; margin-bottom: 15px; 
+            border: 1px solid #d1d5db; border-radius: 8px; 
+            font-family: 'Poppins', sans-serif; color: var(--azul-oscuro); outline: none;
+        }
+        input:focus { border-color: var(--azul-oscuro); }
+
+        button { 
+            padding: 15px; font-size: 16px; font-weight: 600; margin: 8px 0; 
+            border: none; border-radius: 8px; color: var(--blanco); cursor: pointer; 
+            width: 100%; font-family: 'Poppins', sans-serif; transition: transform 0.1s;
+        }
+        button:active { transform: scale(0.97); }
+
+        .btn-entrada { background-color: var(--azul-oscuro); }
+        .btn-salida { background-color: var(--naranja); }
+        .btn-detener { background-color: var(--rojo-salida); margin-top: 15px; }
+        .btn-manual { background-color: var(--gris-texto); font-size: 14px; padding: 12px; margin-top: 0;}
+        .btn-ocr { background-color: #8e44ad; font-size: 14px; padding: 12px; margin-top: 10px;}
+
+        #reader { width: 100%; margin: 10px 0; display: none; border-radius: 8px; overflow: hidden; border: 2px solid var(--gris-fondo); }
+
+        #mensaje { 
+            margin-top: 15px; font-weight: 500; padding: 12px; border-radius: 8px; 
+            display: none; font-size: 14px; 
+        }
+        .exito { background-color: #e6f4ea; color: #1e8e3e; border: 1px solid #ceead6; }
+        .error { background-color: #fce8e6; color: #d93025; border: 1px solid #fad2cf; }
+
+        #contador { 
+            font-size: 18px; font-weight: 700; color: var(--azul-oscuro); 
+            margin-top: 10px; display: none; background: var(--gris-fondo);
+            padding: 10px; border-radius: 8px;
+        }
+
+        .seccion-manual { display: none; margin-top: 15px; border-top: 1px dashed #ccc; padding-top: 15px; }
+        #foto-input { display: none; }
+    </style>
+</head>
+<body>
+    <div class="contenedor">
+        <h2>Control de Inventario</h2>
+        
+        <label>Nombre del Operario:</label>
+        <input type="text" id="operario" placeholder="Ej: Juan Pérez" required>
+        
+        <div id="botones">
+            <button class="btn-entrada" onclick="iniciarEscaneo('ENTRADA')">📥 Registrar Entrada</button>
+            <button class="btn-salida" onclick="iniciarEscaneo('SALIDA')">📤 Registrar Salida</button>
+        </div>
+        
+        <div id="reader"></div>
+        
+        <div id="contador">Escaneados: 0</div>
+        
+        <div id="seccion-manual" class="seccion-manual">
+            <label>Escribir Serial Manualmente:</label>
+            <input type="text" id="serial-manual" placeholder="Escribe el código aquí">
+            <button class="btn-manual" onclick="guardarManual()">Guardar este Serial</button>
+            
+            <!-- Botón y input oculto para la cámara OCR -->
+            <input type="file" id="foto-input" accept="image/*" capture="environment">
+            <button class="btn-ocr" onclick="document.getElementById('foto-input').click()">📷 Leer Código Roto (IA)</button>
+        </div>
+
+        <button id="btn-detener" class="btn-detener" style="display:none;" onclick="detenerEscaneo()">🛑 Terminar Escaneo</button>
+        
+        <div id="mensaje"></div>
+    </div>
+
+    <script>
+        // URL de tu Google Apps Script
+        const URL_APPS_SCRIPT = 'https://script.google.com/macros/s/AKfycbwoHIKKmGAPbsWeDALqhDCa3_O8JRepcc-3Ryfjq3tTeBbWiHetwx7SIsNH030dGVc0XA/exec';
+        
+        let html5QrCode;
+        let tipoMovimiento = '';
+        let contador = 0;
+        let operarioActual = '';
+        
+        // Recordar el nombre del operario
+        document.getElementById('operario').value = localStorage.getItem('operarioInv') || '';
+
+        function iniciarEscaneo(tipo) {
+            operarioActual = document.getElementById('operario').value.trim();
+            if (!operarioActual) {
+                alert('Por favor, escribe el nombre del operario.');
+                return;
+            }
+            localStorage.setItem('operarioInv', operarioActual); 
+
+            tipoMovimiento = tipo;
+            contador = 0;
+            
+            // Manejo de pantallas
+            document.getElementById('botones').style.display = 'none';
+            document.getElementById('btn-detener').style.display = 'block';
+            document.getElementById('reader').style.display = 'block';
+            document.getElementById('contador').style.display = 'block';
+            document.getElementById('contador').innerText = 'Escaneados: 0';
+            document.getElementById('seccion-manual').style.display = 'block';
+            document.getElementById('mensaje').style.display = 'none';
+            document.getElementById('serial-manual').value = '';
+            
+            // Iniciar cámara rápida (Ráfaga)
+            html5QrCode = new Html5Qrcode("reader");
+            html5QrCode.start(
+                { facingMode: "environment" },
+                { fps: 15, qrbox: { width: 280, height: 180 } },
+                (decodedText) => {
+                    if (navigator.vibrate) navigator.vibrate(100);
+                    procesarSerial(decodedText);
+                },
+                (errorMessage) => { /* Ignorar errores normales */ }
+            ).catch(err => {
+                alert('Error de cámara: ' + err);
+                detenerEscaneo();
+            });
+        }
+
+        // Función de Inteligencia Artificial (OCR)
+        document.getElementById('foto-input').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const mensajeDiv = document.getElementById('mensaje');
+            mensajeDiv.style.display = 'block';
+            mensajeDiv.className = '';
+            mensajeDiv.style.backgroundColor = '#e5e7eb';
+            mensajeDiv.style.color = '#374151';
+            mensajeDiv.innerText = '🧠 La IA está leyendo el código roto...';
+
+            try {
+                // Tesseract.js lee la foto
+                const { data: { text } } = await Tesseract.recognize(file, 'eng');
+                
+                // Limpiamos el texto (solo dejamos letras y números)
+                const serialLeido = text.replace(/[^a-zA-Z0-9]/g, '').trim();
+                
+                if (serialLeido) {
+                    mensajeDiv.innerText = '📖 Texto detectado: ' + serialLeido + '. Enviando...';
+                    procesarSerial(serialLeido);
+                } else {
+                    mensajeDiv.className = 'error';
+                    mensajeDiv.innerText = '❌ No se pudo leer texto. Intenta de nuevo o escríbelo manual.';
+                }
+            } catch (error) {
+                mensajeDiv.className = 'error';
+                mensajeDiv.innerText = '❌ Error al procesar la imagen.';
+            } finally {
+                e.target.value = ''; // Limpiar la foto para la próxima
+            }
+        });
+
+        function guardarManual() {
+            const inputSerial = document.getElementById('serial-manual');
+            const serial = inputSerial.value.trim();
+            if (!serial) { alert("Escribe un serial válido."); return; }
+            
+            procesarSerial(serial);
+            inputSerial.value = '';
+            inputSerial.focus();
+        }
+
+        function procesarSerial(serial) {
+            const mensajeDiv = document.getElementById('mensaje');
+            mensajeDiv.style.display = 'block';
+            mensajeDiv.className = '';
+            mensajeDiv.style.backgroundColor = '#e5e7eb';
+            mensajeDiv.style.color = '#374151';
+            mensajeDiv.innerText = 'Verificando: ' + serial + '...';
+
+            const payload = { serial: serial, tipo: tipoMovimiento, operario: operarioActual };
+
+            fetch(URL_APPS_SCRIPT, {
+                method: 'POST', 
+                mode: 'no-cors', 
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            }).then(() => {
+                contador++;
+                document.getElementById('contador').innerText = 'Escaneados: ' + contador;
+                mensajeDiv.className = 'exito';
+                mensajeDiv.style.backgroundColor = '';
+                mensajeDiv.innerText = '✅ Guardado en el sistema.';
+            }).catch((error) => {
+                mensajeDiv.className = 'error';
+                mensajeDiv.innerText = '❌ Error de conexión al guardar: ' + serial;
+            });
+        }
+
+        function detenerEscaneo() {
+            if (html5QrCode) {
+                html5QrCode.stop().then(() => {
+                    html5QrCode.clear();
+                }).catch(e => console.log(e));
+            }
+            document.getElementById('reader').style.display = 'none';
+            document.getElementById('btn-detener').style.display = 'none';
+            document.getElementById('seccion-manual').style.display = 'none';
+            document.getElementById('botones').style.display = 'block';
+            
+            if (contador > 0) {
+                document.getElementById('mensaje').className = 'exito';
+                document.getElementById('mensaje').innerText = '✅ Tanda terminada. Total guardados: ' + contador;
+            }
+        }
+    </script>
+</body>
+</html>
