@@ -32,7 +32,6 @@
         .btn-detener { background-color: var(--rojo-salida); margin-top: 15px; }
         .btn-manual { background-color: var(--gris-texto); font-size: 14px; padding: 12px; margin-top: 0;}
         
-        /* Botones nuevos de acción */
         .btn-escanear { background-color: var(--azul-oscuro); font-size: 16px; margin-bottom: 10px;}
         .btn-ocr { background-color: #8e44ad; font-size: 14px; padding: 12px; margin-top: 5px;}
         
@@ -95,7 +94,7 @@
         let html5QrCode = null;
         let tipoMovimiento = '';
         let operarioActual = '';
-        let listaSeriales = []; // Aquí guardamos lo que llevamos escaneado
+        let listaSeriales = []; 
         
         document.getElementById('operario').value = localStorage.getItem('operarioInv') || '';
 
@@ -105,18 +104,21 @@
             localStorage.setItem('operarioInv', operarioActual); 
 
             tipoMovimiento = tipo;
-            listaSeriales = []; // Reiniciar la lista
+            listaSeriales = []; 
             
-            // Mostrar pantalla de escaneo, ocultar inicio
+            // Mostrar pantalla de escaneo
             document.getElementById('pantalla-inicio').style.display = 'none';
             document.getElementById('pantalla-escaneo').style.display = 'block';
+            
+            // ¡AQUÍ ESTABA EL ERROR! Faltaba mostrar la sección de acciones
+            document.getElementById('seccion-acciones').style.display = 'block'; 
+            
             document.getElementById('lista-escaneados').style.display = 'block';
             document.getElementById('ul-escaneados').innerHTML = '';
             document.getElementById('mensaje').style.display = 'none';
             document.getElementById('serial-manual').value = '';
         }
 
-        // Función que enciende la cámara SOLO cuando se presiona el botón
         function abrirCamaraBarras() {
             document.getElementById('reader').style.display = 'block';
             
@@ -126,7 +128,6 @@
                 { fps: 10, qrbox: { width: 250, height: 150 } },
                 (decodedText) => {
                     if (navigator.vibrate) navigator.vibrate(100);
-                    // Al leer con éxito, apagamos la cámara
                     html5QrCode.stop().then(() => {
                         document.getElementById('reader').style.display = 'none';
                         html5QrCode.clear();
@@ -137,7 +138,6 @@
             ).catch(err => { alert('Error al abrir cámara: ' + err); });
         }
 
-        // IA para códigos rotos
         document.getElementById('foto-input').addEventListener('change', async (e) => {
             const file = e.target.files[0];
             if (!file) return;
@@ -151,7 +151,6 @@
 
             try {
                 const { data: { text } } = await Tesseract.recognize(file, 'eng');
-                // Buscamos solo los números en el texto que devuelve la IA
                 const serialLeido = text.match(/\d{6,20}/); 
                 
                 if (serialLeido) {
@@ -179,7 +178,6 @@
         }
 
         function procesarSerial(serial) {
-            // FILTRO DE SEGURIDAD: Evitar códigos QR gigantes
             if (serial.length > 25 || serial.length < 5) {
                 alert('⚠️ El código es muy corto o muy largo. Revisa el producto.');
                 return;
@@ -198,7 +196,6 @@
                 method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             }).then(() => {
-                // Agregar a la lista visual
                 listaSeriales.push(serial);
                 document.getElementById('ul-escaneados').innerHTML += '<li>' + serial + '</li>';
                 
