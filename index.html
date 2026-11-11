@@ -26,12 +26,12 @@
         input:focus { border-color: var(--azul-oscuro); }
         button { padding: 15px; font-size: 16px; font-weight: 600; margin: 8px 0; border: none; border-radius: 8px; color: var(--blanco); cursor: pointer; width: 100%; font-family: 'Poppins', sans-serif; transition: transform 0.1s; }
         button:active { transform: scale(0.97); }
+        button:disabled { background-color: #9ca3af !important; cursor: not-allowed; transform: none; }
 
         .btn-entrada { background-color: var(--azul-oscuro); }
         .btn-salida { background-color: var(--naranja); }
         .btn-detener { background-color: var(--rojo-salida); margin-top: 15px; }
         .btn-manual { background-color: var(--gris-texto); font-size: 14px; padding: 12px; margin-top: 0;}
-        
         .btn-escanear { background-color: var(--azul-oscuro); font-size: 16px; margin-bottom: 10px;}
         .btn-ocr { background-color: #8e44ad; font-size: 14px; padding: 12px; margin-top: 5px;}
         
@@ -60,23 +60,20 @@
             <button class="btn-salida" onclick="iniciarTanda('SALIDA')">📤 Registrar Salida</button>
         </div>
         
-        <!-- Pantalla de escaneo activo -->
         <div id="pantalla-escaneo" style="display:none;">
             <div id="reader"></div>
             
-            <!-- Aquí están las opciones manuales y de cámara -->
             <div id="seccion-acciones">
-                <button class="btn-escanear" onclick="abrirCamaraBarras()">📷 Escanear con Cámara</button>
+                <button id="btn-camara" class="btn-escanear" onclick="abrirCamaraBarras()">📷 Escanear con Cámara</button>
                 
                 <label style="margin-top: 15px;">O escribe el serial manual:</label>
                 <input type="text" id="serial-manual" placeholder="Escribe el código aquí">
                 <button class="btn-manual" onclick="guardarManual()">Guardar este Serial</button>
                 
                 <input type="file" id="foto-input" accept="image/*" capture="environment">
-                <button class="btn-ocr" onclick="document.getElementById('foto-input').click()">🧠 Leer Código Roto (IA)</button>
+                <button id="btn-ia" class="btn-ocr" onclick="document.getElementById('foto-input').click()">🧠 Leer Código Roto (IA)</button>
             </div>
 
-            <!-- Listado de lo que se lleva en esta tanda -->
             <div id="lista-escaneados">
                 <strong>Guardados en esta tanda:</strong>
                 <ul id="ul-escaneados"></ul>
@@ -106,13 +103,9 @@
             tipoMovimiento = tipo;
             listaSeriales = []; 
             
-            // Mostrar pantalla de escaneo
             document.getElementById('pantalla-inicio').style.display = 'none';
             document.getElementById('pantalla-escaneo').style.display = 'block';
-            
-            // ¡AQUÍ ESTABA EL ERROR! Faltaba mostrar la sección de acciones
             document.getElementById('seccion-acciones').style.display = 'block'; 
-            
             document.getElementById('lista-escaneados').style.display = 'block';
             document.getElementById('ul-escaneados').innerHTML = '';
             document.getElementById('mensaje').style.display = 'none';
@@ -138,33 +131,53 @@
             ).catch(err => { alert('Error al abrir cámara: ' + err); });
         }
 
+        // LÓGICA MEJORADA DE LA IA
         document.getElementById('foto-input').addEventListener('change', async (e) => {
             const file = e.target.files[0];
             if (!file) return;
 
             const mensajeDiv = document.getElementById('mensaje');
+            const btnIA = document.getElementById('btn-ia');
+            
+            // Bloquear botón para que no se presione dos veces
+            btnIA.disabled = true;
+            btnIA.innerText = '🧠 Leyendo...';
+
             mensajeDiv.style.display = 'block';
             mensajeDiv.className = '';
             mensajeDiv.style.backgroundColor = '#e5e7eb';
             mensajeDiv.style.color = '#374151';
-            mensajeDiv.innerText = '🧠 La IA está leyendo el código roto...';
+            mensajeDiv.innerText = 'Analizando imagen...';
 
             try {
                 const { data: { text } } = await Tesseract.recognize(file, 'eng');
-                const serialLeido = text.match(/\d{6,20}/); 
+                
+                // 1. Buscamos si el texto contiene "S/N:" y sacamos lo que sigue
+                let serialLeido = null;
+                const matchSN = text.match(/S\/N:?\s*([A-Z0-9]{10,25})/i);
+                
+                if (matchSN) {
+                    serialLeido = matchSN[1].trim();
+                } else {
+                    // 2. Si no encuentra S/N, busca cualquier cadena larga de números y letras
+                    const matchGenerico = text.match(/[A-Z0-9]{12,25}/i);
+                    if (matchGenerico) serialLeido = matchGenerico[0];
+                }
                 
                 if (serialLeido) {
-                    mensajeDiv.innerText = '📖 Número detectado: ' + serialLeido[0] + '. Enviando...';
-                    procesarSerial(serialLeido[0]);
+                    mensajeDiv.innerText = '📖 Serial detectado: ' + serialLeido;
+                    procesarSerial(serialLeido);
                 } else {
                     mensajeDiv.className = 'error';
-                    mensajeDiv.innerText = '❌ No se pudo encontrar un número válido. Intenta manual.';
+                    mensajeDiv.innerText = '❌ No se detectó un serial válido. Intenta de nuevo o escríbelo manual.';
                 }
             } catch (error) {
                 mensajeDiv.className = 'error';
                 mensajeDiv.innerText = '❌ Error al procesar la imagen.';
             } finally {
                 e.target.value = ''; 
+                btnIA.disabled = false;
+                btnIA.innerText = '🧠 Leer Código Roto (IA)';
             }
         });
 
@@ -178,8 +191,15 @@
         }
 
         function procesarSerial(serial) {
+            // Filtro de seguridad
             if (serial.length > 25 || serial.length < 5) {
                 alert('⚠️ El código es muy corto o muy largo. Revisa el producto.');
+                return;
+            }
+
+            // Evitar duplicados si la cámara lee dos veces muy rápido
+            if (listaSeriales.includes(serial)) {
+                alert('⚠️ Este serial ya fue escaneado en esta tanda.');
                 return;
             }
 
@@ -188,7 +208,7 @@
             mensajeDiv.className = '';
             mensajeDiv.style.backgroundColor = '#e5e7eb';
             mensajeDiv.style.color = '#374151';
-            mensajeDiv.innerText = 'Verificando: ' + serial + '...';
+            mensajeDiv.innerText = 'Guardando: ' + serial + '...';
 
             const payload = { serial: serial, tipo: tipoMovimiento, operario: operarioActual };
 
