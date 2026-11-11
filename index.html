@@ -6,7 +6,6 @@
     <title>Escáner de Inventario</title>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/html5-qrcode"></script>
-    <!-- Esta línea es la que trae la Inteligencia Artificial para leer códigos rotos -->
     <script src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js'></script>
     
     <style>
@@ -32,14 +31,21 @@
         .btn-salida { background-color: var(--naranja); }
         .btn-detener { background-color: var(--rojo-salida); margin-top: 15px; }
         .btn-manual { background-color: var(--gris-texto); font-size: 14px; padding: 12px; margin-top: 0;}
-        .btn-ocr { background-color: #8e44ad; font-size: 14px; padding: 12px; margin-top: 10px;}
-
+        
+        /* Botones nuevos de acción */
+        .btn-escanear { background-color: var(--azul-oscuro); font-size: 16px; margin-bottom: 10px;}
+        .btn-ocr { background-color: #8e44ad; font-size: 14px; padding: 12px; margin-top: 5px;}
+        
         #reader { width: 100%; margin: 10px 0; display: none; border-radius: 8px; overflow: hidden; border: 2px solid var(--gris-fondo); }
         #mensaje { margin-top: 15px; font-weight: 500; padding: 12px; border-radius: 8px; display: none; font-size: 14px; }
         .exito { background-color: #e6f4ea; color: #1e8e3e; border: 1px solid #ceead6; }
         .error { background-color: #fce8e6; color: #d93025; border: 1px solid #fad2cf; }
-        #contador { font-size: 18px; font-weight: 700; color: var(--azul-oscuro); margin-top: 10px; display: none; background: var(--gris-fondo); padding: 10px; border-radius: 8px; }
-        .seccion-manual { display: none; margin-top: 15px; border-top: 1px dashed #ccc; padding-top: 15px; }
+        
+        #lista-escaneados { margin-top: 15px; text-align: left; font-size: 12px; color: var(--gris-texto); display: none; max-height: 150px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; background: var(--blanco);}
+        #lista-escaneados ul { margin: 0; padding-left: 20px; }
+        #lista-escaneados li { margin-bottom: 4px; font-weight: 500; color: var(--azul-oscuro); }
+
+        #seccion-acciones { display: none; margin-top: 15px; border-top: 1px dashed #ccc; padding-top: 15px; }
         #foto-input { display: none; }
     </style>
 </head>
@@ -47,67 +53,91 @@
     <div class="contenedor">
         <h2>Control de Inventario</h2>
         
-        <label>Nombre del Operario:</label>
-        <input type="text" id="operario" placeholder="Ej: Juan Pérez" required>
-        
-        <div id="botones">
-            <button class="btn-entrada" onclick="iniciarEscaneo('ENTRADA')">📥 Registrar Entrada</button>
-            <button class="btn-salida" onclick="iniciarEscaneo('SALIDA')">📤 Registrar Salida</button>
+        <div id="pantalla-inicio">
+            <label>Nombre del Operario:</label>
+            <input type="text" id="operario" placeholder="Ej: Juan Pérez" required>
+            
+            <button class="btn-entrada" onclick="iniciarTanda('ENTRADA')">📥 Registrar Entrada</button>
+            <button class="btn-salida" onclick="iniciarTanda('SALIDA')">📤 Registrar Salida</button>
         </div>
         
-        <div id="reader"></div>
-        <div id="contador">Escaneados: 0</div>
-        
-        <div id="seccion-manual" class="seccion-manual">
-            <label>Escribir Serial Manualmente:</label>
-            <input type="text" id="serial-manual" placeholder="Escribe el código aquí">
-            <button class="btn-manual" onclick="guardarManual()">Guardar este Serial</button>
+        <!-- Pantalla de escaneo activo -->
+        <div id="pantalla-escaneo" style="display:none;">
+            <div id="reader"></div>
             
-            <input type="file" id="foto-input" accept="image/*" capture="environment">
-            <button class="btn-ocr" onclick="document.getElementById('foto-input').click()">📷 Leer Código Roto (IA)</button>
+            <!-- Aquí están las opciones manuales y de cámara -->
+            <div id="seccion-acciones">
+                <button class="btn-escanear" onclick="abrirCamaraBarras()">📷 Escanear con Cámara</button>
+                
+                <label style="margin-top: 15px;">O escribe el serial manual:</label>
+                <input type="text" id="serial-manual" placeholder="Escribe el código aquí">
+                <button class="btn-manual" onclick="guardarManual()">Guardar este Serial</button>
+                
+                <input type="file" id="foto-input" accept="image/*" capture="environment">
+                <button class="btn-ocr" onclick="document.getElementById('foto-input').click()">🧠 Leer Código Roto (IA)</button>
+            </div>
+
+            <!-- Listado de lo que se lleva en esta tanda -->
+            <div id="lista-escaneados">
+                <strong>Guardados en esta tanda:</strong>
+                <ul id="ul-escaneados"></ul>
+            </div>
+
+            <button id="btn-detener" class="btn-detener" onclick="detenerTanda()">🛑 Terminar y Guardar</button>
         </div>
 
-        <button id="btn-detener" class="btn-detener" style="display:none;" onclick="detenerEscaneo()">🛑 Terminar Escaneo</button>
         <div id="mensaje"></div>
     </div>
 
     <script>
         const URL_APPS_SCRIPT = 'https://script.google.com/macros/s/AKfycbwoHIKKmGAPbsWeDALqhDCa3_O8JRepcc-3Ryfjq3tTeBbWiHetwx7SIsNH030dGVc0XA/exec';
         
-        let html5QrCode;
+        let html5QrCode = null;
         let tipoMovimiento = '';
-        let contador = 0;
         let operarioActual = '';
+        let listaSeriales = []; // Aquí guardamos lo que llevamos escaneado
         
         document.getElementById('operario').value = localStorage.getItem('operarioInv') || '';
 
-        function iniciarEscaneo(tipo) {
+        function iniciarTanda(tipo) {
             operarioActual = document.getElementById('operario').value.trim();
             if (!operarioActual) { alert('Por favor, escribe el nombre del operario.'); return; }
             localStorage.setItem('operarioInv', operarioActual); 
 
             tipoMovimiento = tipo;
-            contador = 0;
+            listaSeriales = []; // Reiniciar la lista
             
-            document.getElementById('botones').style.display = 'none';
-            document.getElementById('btn-detener').style.display = 'block';
-            document.getElementById('reader').style.display = 'block';
-            document.getElementById('contador').style.display = 'block';
-            document.getElementById('contador').innerText = 'Escaneados: 0';
-            document.getElementById('seccion-manual').style.display = 'block';
+            // Mostrar pantalla de escaneo, ocultar inicio
+            document.getElementById('pantalla-inicio').style.display = 'none';
+            document.getElementById('pantalla-escaneo').style.display = 'block';
+            document.getElementById('lista-escaneados').style.display = 'block';
+            document.getElementById('ul-escaneados').innerHTML = '';
             document.getElementById('mensaje').style.display = 'none';
             document.getElementById('serial-manual').value = '';
+        }
+
+        // Función que enciende la cámara SOLO cuando se presiona el botón
+        function abrirCamaraBarras() {
+            document.getElementById('reader').style.display = 'block';
             
             html5QrCode = new Html5Qrcode("reader");
             html5QrCode.start(
                 { facingMode: "environment" },
-                { fps: 15, qrbox: { width: 280, height: 180 } },
-                (decodedText) => { if (navigator.vibrate) navigator.vibrate(100); procesarSerial(decodedText); },
+                { fps: 10, qrbox: { width: 250, height: 150 } },
+                (decodedText) => {
+                    if (navigator.vibrate) navigator.vibrate(100);
+                    // Al leer con éxito, apagamos la cámara
+                    html5QrCode.stop().then(() => {
+                        document.getElementById('reader').style.display = 'none';
+                        html5QrCode.clear();
+                    });
+                    procesarSerial(decodedText);
+                },
                 (errorMessage) => {}
-            ).catch(err => { alert('Error de cámara: ' + err); detenerEscaneo(); });
+            ).catch(err => { alert('Error al abrir cámara: ' + err); });
         }
 
-        // Lógica de la Inteligencia Artificial
+        // IA para códigos rotos
         document.getElementById('foto-input').addEventListener('change', async (e) => {
             const file = e.target.files[0];
             if (!file) return;
@@ -121,14 +151,15 @@
 
             try {
                 const { data: { text } } = await Tesseract.recognize(file, 'eng');
-                const serialLeido = text.replace(/[^a-zA-Z0-9]/g, '').trim();
+                // Buscamos solo los números en el texto que devuelve la IA
+                const serialLeido = text.match(/\d{6,20}/); 
                 
                 if (serialLeido) {
-                    mensajeDiv.innerText = '📖 Texto detectado: ' + serialLeido + '. Enviando...';
-                    procesarSerial(serialLeido);
+                    mensajeDiv.innerText = '📖 Número detectado: ' + serialLeido[0] + '. Enviando...';
+                    procesarSerial(serialLeido[0]);
                 } else {
                     mensajeDiv.className = 'error';
-                    mensajeDiv.innerText = '❌ No se pudo leer texto. Intenta de nuevo o escríbelo manual.';
+                    mensajeDiv.innerText = '❌ No se pudo encontrar un número válido. Intenta manual.';
                 }
             } catch (error) {
                 mensajeDiv.className = 'error';
@@ -148,6 +179,12 @@
         }
 
         function procesarSerial(serial) {
+            // FILTRO DE SEGURIDAD: Evitar códigos QR gigantes
+            if (serial.length > 25 || serial.length < 5) {
+                alert('⚠️ El código es muy corto o muy largo. Revisa el producto.');
+                return;
+            }
+
             const mensajeDiv = document.getElementById('mensaje');
             mensajeDiv.style.display = 'block';
             mensajeDiv.className = '';
@@ -161,26 +198,30 @@
                 method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             }).then(() => {
-                contador++;
-                document.getElementById('contador').innerText = 'Escaneados: ' + contador;
+                // Agregar a la lista visual
+                listaSeriales.push(serial);
+                document.getElementById('ul-escaneados').innerHTML += '<li>' + serial + '</li>';
+                
                 mensajeDiv.className = 'exito';
                 mensajeDiv.style.backgroundColor = '';
-                mensajeDiv.innerText = '✅ Guardado en el sistema.';
+                mensajeDiv.innerText = '✅ Guardado: ' + serial;
             }).catch((error) => {
                 mensajeDiv.className = 'error';
-                mensajeDiv.innerText = '❌ Error de conexión al guardar: ' + serial;
+                mensajeDiv.innerText = '❌ Error al guardar: ' + serial;
             });
         }
 
-        function detenerEscaneo() {
-            if (html5QrCode) html5QrCode.stop().then(() => html5QrCode.clear()).catch(e => console.log(e));
+        function detenerTanda() {
+            if (html5QrCode) {
+                html5QrCode.stop().then(() => html5QrCode.clear()).catch(e => console.log(e));
+            }
             document.getElementById('reader').style.display = 'none';
-            document.getElementById('btn-detener').style.display = 'none';
-            document.getElementById('seccion-manual').style.display = 'none';
-            document.getElementById('botones').style.display = 'block';
-            if (contador > 0) {
+            document.getElementById('pantalla-escaneo').style.display = 'none';
+            document.getElementById('pantalla-inicio').style.display = 'block';
+            
+            if (listaSeriales.length > 0) {
                 document.getElementById('mensaje').className = 'exito';
-                document.getElementById('mensaje').innerText = '✅ Tanda terminada. Total guardados: ' + contador;
+                document.getElementById('mensaje').innerText = '✅ Tanda terminada. Guardados: ' + listaSeriales.length;
             }
         }
     </script>
